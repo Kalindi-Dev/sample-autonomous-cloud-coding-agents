@@ -23,7 +23,11 @@ from config import (
     resolve_linear_api_token,
 )
 from context import assemble_prompt, fetch_github_issue
-from jira_reactions import comment_task_finished, comment_task_started
+from jira_reactions import (
+    comment_task_started,
+    transition_pr_opened,
+    transition_task_started,
+)
 from linear_reactions import react_task_finished, react_task_started
 from models import AgentResult, HydratedContext, RepoSetup, TaskConfig, TaskResult
 from observability import current_otel_trace_id, task_span
@@ -466,8 +470,33 @@ def _resolve_overall_task_status(
     agent_status = agent_result.status
     err = agent_result.error
 
+    # ABCA-662: a max_turns cap is a CORRECT classification, but on its own it
+    # doesn't say WHETHER the task genuinely needed the turns or SPUN on a failing
+    # operation until it ran out (662 thrashed on a failing `git push` → invalid
+    # credentials, retried every which way, and capped). When the stuck-guard's
+    # trailing window was failure-dominated, append its one-line summary so the
+    # reason distinguishes "ran long" from "looped on an error" — the classifier
+    # still buckets it as max_turns, but a human sees the real cause. Only enriches
+    # the max_turns reason; a task that used its turns productively adds nothing.
+    if err and "error_max_turns" in err:
+        from hooks import last_stuck_summary
+
+        stuck = last_stuck_summary()
+        if stuck and stuck not in err:
+            err = f"{err} — {stuck}"
+
     if agent_status in ("success", "end_turn") and build_ok:
         return "success", err
+
+    # #251 carry-path: a hook may have detected an environmental blocker mid-run
+    # (egress denial, policy fail-closed) that the SDK surfaced only as a generic
+    # failure or as a missing ResultMessage. Promote the canonical
+    # ``BLOCKED[<kind>]: …`` reason so the CDK classifier attaches a precise
+    # remedy. Import locally to avoid a module-load cycle (hooks imports
+    # pipeline-adjacent modules).
+    from hooks import last_blocker_reason
+
+    blocker = last_blocker_reason()
 
     if agent_status == "unknown":
         if pr_url:
@@ -480,10 +509,17 @@ def _resolve_overall_task_status(
                 "INFO",
                 "No ResultMessage from SDK; build_ok=True (informational; task still failed)",
             )
+        # An egress denial that kills the agent's outbound calls is a likely
+        # cause of a missing ResultMessage — prefer the specific blocker reason
+        # over the generic SDK-no-result message when both are present.
+        if blocker and not err:
+            return "error", blocker
         merged = f"{err}; {_SDK_NO_RESULT_MESSAGE}" if err else _SDK_NO_RESULT_MESSAGE
         return "error", merged
 
     if not err:
+        if blocker:
+            return "error", blocker
         err = f"Task did not succeed (agent_status={agent_status!r}, build_ok={build_ok})"
     return "error", err
 
@@ -662,13 +698,29 @@ def run_task(
             "repo.url": config.repo_url,
             "issue.number": config.issue_number,
             "agent.model": config.anthropic_model,
+            # Correlation envelope (#245): user.id joins agent spans to
+            # orchestrator logs by the platform identity, not just task/repo.
+            **({"user.id": config.user_id} if config.user_id else {}),
         },
     ) as root_span:
         task_state.write_running(config.task_id)
         task_state.write_heartbeat(config.task_id)
 
         agent_result: AgentResult | None = None
-        progress = _ProgressWriter(config.task_id, trace=trace)
+        progress = _ProgressWriter(
+            config.task_id, trace=trace, user_id=config.user_id, repo=config.repo_url
+        )
+        # #251: clear any blocker latched by a prior task. The agent container
+        # is one-task-per-process today, but the FastAPI server thread-pool can
+        # in principle dispatch a second run_task in the same process — reset
+        # here so a stale BLOCKED[...] reason can never leak into this task's
+        # terminal error_message (the latch is a scalar, not task_id-keyed).
+        from hooks import reset_blocker_reason, reset_stuck_summary
+
+        reset_blocker_reason()
+        # ABCA-662: same per-task reset for the stuck-guard recent-failure latch,
+        # so a prior task's observation can't leak into this task's max_turns copy.
+        reset_stuck_summary()
         # --trace accumulator (design §10.1): when the task opted into
         # trace, ``_TrajectoryWriter`` keeps an in-memory copy of each
         # event so the pipeline can gzip+upload the full trajectory to
@@ -794,7 +846,7 @@ def run_task(
 
             # Setup repo (deterministic pre-hooks)
             with task_span("task.repo_setup") as setup_span:
-                setup = setup_repo(config)
+                setup = setup_repo(config, progress=progress)
                 setup_span.set_attribute("build.before", setup.build_before)
             progress.write_agent_milestone(
                 "repo_setup_complete",
@@ -828,6 +880,14 @@ def run_task(
             # Remote MCP can't be used from a headless agent). No-op for
             # non-Jira tasks. Best-effort; failures are logged, never block.
             comment_task_started(
+                config.channel_source,
+                config.channel_metadata,
+            )
+
+            # Move the Jira card To Do → In Progress so the board reflects that
+            # work has started (issue #572). No-op for non-Jira tasks.
+            # Best-effort; failures are logged and never block the pipeline.
+            transition_task_started(
                 config.channel_source,
                 config.channel_metadata,
             )
@@ -1027,6 +1087,14 @@ def run_task(
                 post_span.set_attribute("pr.url", pr_url or "")
             if pr_url:
                 progress.write_agent_milestone("pr_created", pr_url)
+                # Move the Jira card In Progress → In Review now that a PR is
+                # open (issue #572). Only fires when a PR was actually opened —
+                # failed / no-PR tasks leave the card where humans can see the
+                # failure comment. No-op for non-Jira tasks; best-effort.
+                transition_pr_opened(
+                    config.channel_source,
+                    config.channel_metadata,
+                )
 
             # Memory write — capture task episode and repo learnings
             memory_written = False
@@ -1076,14 +1144,14 @@ def run_task(
                 started_reaction_id=linear_eyes_reaction_id,
             )
 
-            # Terminal status comment on the Jira issue (REST shim, with the
-            # PR link when one was opened). No-op for non-Jira tasks.
-            comment_task_finished(
-                config.channel_source,
-                config.channel_metadata,
-                success=(overall_status == "success"),
-                pr_url=pr_url,
-            )
+            # NOTE: the terminal status comment on the Jira issue is NOT posted
+            # here. Since issue #573 the deterministic fan-out plane
+            # (``cdk/src/handlers/fanout-task-events.ts`` ``dispatchToJira``)
+            # owns the Jira final-status comment — it carries cost/turns/
+            # duration and, crucially, fires even if this agent crashes before
+            # reaching this point (max-turns, OOM). Posting here too would
+            # double-comment. The agent still posts the *start* comment
+            # (``comment_task_started`` above) for in-flight progress.
 
             # --trace trajectory S3 upload (design §10.1). Runs AFTER
             # post-hooks but BEFORE ``write_terminal`` so the resulting
@@ -1214,14 +1282,11 @@ def run_task(
                 success=False,
                 started_reaction_id=linear_eyes_reaction_id,
             )
-            # Best-effort failure comment on the Jira issue. No-op for
-            # non-Jira tasks; network failures are swallowed.
-            comment_task_finished(
-                config.channel_source,
-                config.channel_metadata,
-                success=False,
-                pr_url=None,
-            )
+            # NOTE: no Jira failure comment here — the fan-out plane's
+            # ``dispatchToJira`` (issue #573) owns the Jira terminal comment
+            # and fires on the platform side even when this crash path runs,
+            # so posting here would double-comment. (Contrast the Linear ❌
+            # reaction above, which the fan-out plane does not replicate.)
             raise
 
 
