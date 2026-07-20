@@ -476,6 +476,11 @@ describe('TaskApi construct with registry (#246)', () => {
     });
   });
 
+  test('creates the RegistryPublisher and RegistryApprover Cognito groups', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolGroup', { GroupName: 'RegistryPublisher' });
+    template.hasResourceProperties('AWS::Cognito::UserPoolGroup', { GroupName: 'RegistryApprover' });
+  });
+
   test('is not created when the registry props are absent', () => {
     const bare = createStack().template;
     const resources = bare.findResources('AWS::ApiGateway::Resource');

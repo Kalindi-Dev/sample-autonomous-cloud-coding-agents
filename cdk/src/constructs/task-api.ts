@@ -1162,11 +1162,32 @@ export class TaskApi extends Construct {
     // list/show over the shared Cognito authorizer; publish additionally gates
     // on the RegistryPublisher/RegistryApprover groups inside the handler.
     if (props.registryAssetsTable && props.registryArtifactsBucket) {
+      // Cognito groups the publish handler gates on (REGISTRY.md §10). The
+      // handler reads ``cognito:groups`` from the JWT; these resources make the
+      // group names assignable via ``admin-add-user-to-group``. Publisher can
+      // create records (land ``submitted``); Approver can also approve and
+      // auto-approve. Group *names* must match the handler constants
+      // (registry-publish.ts PUBLISHER_GROUP / APPROVER_GROUP).
+      new cognito.CfnUserPoolGroup(this, 'RegistryPublisherGroup', {
+        userPoolId: this.userPool.userPoolId,
+        groupName: 'RegistryPublisher',
+        description: 'May publish registry assets (records land in submitted state).',
+      });
+      new cognito.CfnUserPoolGroup(this, 'RegistryApproverGroup', {
+        userPoolId: this.userPool.userPoolId,
+        groupName: 'RegistryApprover',
+        description: 'May approve/reject/deprecate registry assets and auto-approve on publish.',
+      });
+
       const registryEnv = {
         REGISTRY_ASSETS_TABLE_NAME: props.registryAssetsTable.tableName,
         REGISTRY_ARTIFACTS_BUCKET_NAME: props.registryArtifactsBucket.bucketName,
       };
 
+      // memorySize is explicit (API_HANDLER_MEMORY_MB): the esbuild bundles
+      // for these handlers exceed the 128 MB Lambda default at init (the list
+      // handler in particular), so an omitted memorySize OOMs on cold start
+      // (Runtime.OutOfMemory → 502). Matches the other API handlers.
       const registryPublishFn = new lambda.NodejsFunction(this, 'RegistryPublishFn', {
         entry: path.join(handlersDir, 'registry-publish.ts'),
         handler: 'handler',
@@ -1174,6 +1195,7 @@ export class TaskApi extends Construct {
         architecture: Architecture.ARM_64,
         environment: registryEnv,
         bundling: commonBundling,
+        memorySize: API_HANDLER_MEMORY_MB,
       });
 
       const registryResolveFn = new lambda.NodejsFunction(this, 'RegistryResolveFn', {
@@ -1183,6 +1205,7 @@ export class TaskApi extends Construct {
         architecture: Architecture.ARM_64,
         environment: registryEnv,
         bundling: commonBundling,
+        memorySize: API_HANDLER_MEMORY_MB,
       });
 
       const registryListFn = new lambda.NodejsFunction(this, 'RegistryListFn', {
@@ -1192,6 +1215,7 @@ export class TaskApi extends Construct {
         architecture: Architecture.ARM_64,
         environment: registryEnv,
         bundling: commonBundling,
+        memorySize: API_HANDLER_MEMORY_MB,
       });
 
       const registryShowFn = new lambda.NodejsFunction(this, 'RegistryShowFn', {
@@ -1201,6 +1225,7 @@ export class TaskApi extends Construct {
         architecture: Architecture.ARM_64,
         environment: registryEnv,
         bundling: commonBundling,
+        memorySize: API_HANDLER_MEMORY_MB,
       });
 
       // IAM: publish read/writes the table + writes artifacts; resolve/list/

@@ -112,14 +112,40 @@ export function validatePublish(input: PublishInput): DescriptorViolation[] {
     }
   }
 
-  // --- artifact required for loadable kinds ---
+  // --- artifact required for loadable kinds, UNLESS the descriptor carries
+  // the content inline. An mcp_server may ship its ``server_config`` directly
+  // in the descriptor (the common case — the agent loader reads it from there),
+  // in which case a separate artifact is redundant. Only require an artifact
+  // when there is no inline content to load. ``cedar_policy_module`` / ``skill``
+  // keep their bytes in the artifact, so they still require it.
   if (typeof kind === 'string' && KINDS_REQUIRING_ARTIFACT.has(kind as RegistryAssetKind)) {
-    if (typeof input.artifact_b64 !== 'string' || input.artifact_b64.length === 0) {
-      v.push({ field: 'artifact_b64', message: `artifact_b64 is required for kind ${kind}` });
+    const hasArtifact = typeof input.artifact_b64 === 'string' && input.artifact_b64.length > 0;
+    const hasInlineContent = hasInlineDescriptorContent(kind as RegistryAssetKind, input.descriptor);
+    if (!hasArtifact && !hasInlineContent) {
+      v.push({
+        field: 'artifact_b64',
+        message: `artifact_b64 is required for kind ${kind} (or provide inline content in the descriptor)`,
+      });
     }
   }
 
   return v;
+}
+
+/**
+ * True when the descriptor carries the loadable content inline, making a
+ * separate artifact unnecessary. Today only ``mcp_server`` supports this — via
+ * a ``server_config`` object the agent loader writes straight into ``.mcp.json``.
+ */
+function hasInlineDescriptorContent(kind: RegistryAssetKind, descriptor: unknown): boolean {
+  if (kind !== 'mcp_server') {
+    return false;
+  }
+  if (typeof descriptor !== 'object' || descriptor === null) {
+    return false;
+  }
+  const cfg = (descriptor as Record<string, unknown>).server_config;
+  return typeof cfg === 'object' && cfg !== null;
 }
 
 /** Per-kind descriptor required-field checks (REGISTRY.md §3.3). */

@@ -118,6 +118,63 @@ export interface ResolvedAssetSummary {
   readonly version: string;
 }
 
+// --- Registry command request/response envelopes (#246) ----------------------
+// CLI-facing shapes for the `bgagent registry` commands. The server returns
+// inline objects (not named types), so these are CLI-local (allowlisted in
+// scripts/check-types-sync.ts). They describe the publish/list/show responses.
+
+/** Request body for ``bgagent registry publish`` (POST /registry/assets). */
+export interface RegistryPublishRequest {
+  readonly kind: RegistryAssetKind;
+  readonly namespace: string;
+  readonly name: string;
+  readonly version: string;
+  readonly descriptor: RegistryDescriptor;
+  /** Base64-encoded artifact bytes; required for kinds that carry an artifact. */
+  readonly artifact_b64?: string;
+}
+
+/** Response from a successful publish (subset of the created record). */
+export interface RegistryPublishResponse {
+  readonly kind: RegistryAssetKind;
+  readonly namespace: string;
+  readonly name: string;
+  readonly version: string;
+  readonly status: RegistryAssetStatus;
+  readonly artifact_ref?: string;
+  readonly created_at: string;
+}
+
+/** One row in the list response — the highest version per asset. */
+export interface RegistryAssetListItem {
+  readonly kind: RegistryAssetKind;
+  readonly namespace: string;
+  readonly name: string;
+  readonly latest_version: string;
+  readonly status: RegistryAssetStatus;
+}
+
+/** Response from ``bgagent registry list`` (GET /registry/assets?kind=). */
+export interface RegistryListResponse {
+  readonly assets: readonly RegistryAssetListItem[];
+}
+
+/** One version row in the show response. */
+export interface RegistryVersionItem {
+  readonly version: string;
+  readonly status: RegistryAssetStatus;
+  readonly created_at: string;
+  readonly publisher: string;
+}
+
+/** Response from ``bgagent registry show`` (GET /registry/assets/:kind/:ns/:name). */
+export interface RegistryShowResponse {
+  readonly kind: RegistryAssetKind;
+  readonly namespace: string;
+  readonly name: string;
+  readonly versions: readonly RegistryVersionItem[];
+}
+
 /** Shared across all attachment interfaces. Add new types here (e.g., 'audio'). */
 export type AttachmentType = 'image' | 'file' | 'url';
 
@@ -178,6 +235,9 @@ export interface TaskDetail {
   readonly repo: string | null;
   readonly issue_number: number | null;
   readonly resolved_workflow: ResolvedWorkflow | null;
+  /** Registry assets (#246) resolved for this task, or ``null`` when none
+   *  were pinned. Mirrors ``cdk/src/handlers/shared/types.ts``. */
+  readonly resolved_assets: ResolvedAssetSummary[] | null;
   readonly pr_number: number | null;
   readonly task_description: string | null;
   readonly branch_name: string;
@@ -319,6 +379,9 @@ export interface TaskSummary {
   readonly repo: string | null;
   readonly issue_number: number | null;
   readonly resolved_workflow: ResolvedWorkflow | null;
+  /** Registry assets (#246) resolved for this task, or ``null`` when none
+   *  were pinned. Mirrors ``cdk/src/handlers/shared/types.ts``. */
+  readonly resolved_assets: ResolvedAssetSummary[] | null;
   readonly pr_number: number | null;
   readonly task_description: string | null;
   readonly branch_name: string;

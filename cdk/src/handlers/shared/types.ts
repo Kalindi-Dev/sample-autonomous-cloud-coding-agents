@@ -237,6 +237,11 @@ export interface TaskRecord {
   /** The pinned ``{id, version}`` this task runs. Resolved at the create-task
    *  boundary; optional only on records that predate the cutover. */
   readonly resolved_workflow?: ResolvedWorkflow;
+  /** Registry assets (#246) resolved at the create-task boundary from the
+   *  blueprint's pins — ``{kind, id, version}`` triples stamped for audit
+   *  ("what asset versions did this task run"). Absent when the blueprint
+   *  pinned no assets. See docs/design/REGISTRY.md §7. */
+  readonly resolved_assets?: ResolvedAssetSummary[];
   readonly pr_number?: number;
   readonly task_description?: string;
   readonly branch_name: string;
@@ -415,6 +420,9 @@ export interface TaskDetail {
   readonly repo: string | null;
   readonly issue_number: number | null;
   readonly resolved_workflow: ResolvedWorkflow | null;
+  /** Registry assets (#246) resolved for this task, or ``null`` when none
+   *  were pinned. See docs/design/REGISTRY.md §7. */
+  readonly resolved_assets: ResolvedAssetSummary[] | null;
   readonly pr_number: number | null;
   readonly task_description: string | null;
   readonly branch_name: string;
@@ -489,6 +497,9 @@ export interface TaskSummary {
   readonly repo: string | null;
   readonly issue_number: number | null;
   readonly resolved_workflow: ResolvedWorkflow | null;
+  /** Registry assets (#246) resolved for this task, or ``null`` when none
+   *  were pinned. See docs/design/REGISTRY.md §7. */
+  readonly resolved_assets: ResolvedAssetSummary[] | null;
   readonly pr_number: number | null;
   readonly task_description: string | null;
   readonly branch_name: string;
@@ -863,6 +874,7 @@ export function toTaskDetail(record: TaskRecord): TaskDetail {
     repo: record.repo ?? null,
     issue_number: record.issue_number ?? null,
     resolved_workflow: record.resolved_workflow ?? null,
+    resolved_assets: record.resolved_assets ?? null,
     pr_number: record.pr_number ?? null,
     task_description: record.task_description ?? null,
     branch_name: record.branch_name,
@@ -1043,6 +1055,7 @@ export function toTaskSummary(record: TaskRecord): TaskSummary {
     repo: record.repo ?? null,
     issue_number: record.issue_number ?? null,
     resolved_workflow: record.resolved_workflow ?? null,
+    resolved_assets: record.resolved_assets ?? null,
     pr_number: record.pr_number ?? null,
     task_description: record.task_description ?? null,
     branch_name: record.branch_name,

@@ -39,97 +39,20 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import * as semver from 'semver';
 import { logger } from './logger';
+// Grammar (parseRef/isRegistryRef/assetPk/RegistryResolutionError) lives in the
+// dependency-free registry-ref.ts so the CDK construct layer can validate refs
+// at synth without pulling aws-sdk into the graph. Re-exported below so existing
+// importers of this module keep working.
+import { assetPk, parseRef, RegistryResolutionError } from './registry-ref';
 import type {
-  RegistryAssetKind,
   RegistryAssetRecord,
   RegistryAssetStatus,
-  RegistryRef,
   ResolvedAsset,
   ResolvedAssetBundle,
 } from './types';
 
-/**
- * Grammar for a ``registry://`` reference — the single source of truth on the
- * TypeScript side. MUST stay byte-for-byte equivalent to the Python
- * ``_REGISTRY_REF`` regex; the parity corpus guards against drift.
- *
- *   registry://<kind>/<namespace>/<name>@<constraint>
- *     kind       snake_case: [a-z][a-z0-9_]*
- *     namespace  [a-z][a-z0-9-]*
- *     name       [a-z0-9][a-z0-9._-]*
- *     constraint MANDATORY: exact / caret / tilde semver only
- */
-const REGISTRY_REF_RE =
-  /^registry:\/\/([a-z][a-z0-9_]*)\/([a-z][a-z0-9-]*)\/([a-z0-9][a-z0-9._-]*)@([\^~]?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
-
-/** Kinds that are valid targets of a registry ref. Mirrors REGISTRY.md §2. */
-const KNOWN_KINDS: ReadonlySet<RegistryAssetKind> = new Set<RegistryAssetKind>([
-  'mcp_server',
-  'cedar_policy_module',
-  'skill',
-  'plugin',
-  'subagent',
-  'prompt_fragment',
-  'capability',
-]);
-
-/** Specific, machine-readable reasons a resolution can fail (REGISTRY.md §5). */
-export type RegistryResolutionReason =
-  | 'INVALID_REGISTRY_REF'
-  | 'INVALID_CONSTRAINT'
-  | 'NO_MATCHING_VERSION'
-  | 'REMOVED';
-
-/**
- * Thrown when a ref cannot be resolved. Carries the specific {@link RegistryResolutionReason}
- * and the offending ref so the create-task boundary can fail admission with
- * ``REGISTRY_RESOLUTION_FAILED`` + reason (fail-closed; ADR-018 sub-decision 6).
- */
-export class RegistryResolutionError extends Error {
-  readonly reason: RegistryResolutionReason;
-  readonly ref: string;
-
-  constructor(reason: RegistryResolutionReason, ref: string, detail?: string) {
-    super(`registry resolution failed [${reason}] for ${ref}${detail ? `: ${detail}` : ''}`);
-    this.name = 'RegistryResolutionError';
-    this.reason = reason;
-    this.ref = ref;
-  }
-}
-
-/**
- * Parse a ``registry://`` reference into its components. Grammar-only — does not
- * touch the catalog. Throws {@link RegistryResolutionError} with
- * ``INVALID_REGISTRY_REF`` when the ref does not match the grammar (which
- * includes a missing/floating constraint — pins are mandatory).
- */
-export function parseRef(ref: string): RegistryRef {
-  const m = REGISTRY_REF_RE.exec(ref);
-  if (!m) {
-    throw new RegistryResolutionError('INVALID_REGISTRY_REF', ref);
-  }
-  const [, kind, namespace, name, constraint] = m;
-  if (!KNOWN_KINDS.has(kind as RegistryAssetKind)) {
-    throw new RegistryResolutionError('INVALID_REGISTRY_REF', ref, `unknown kind ${kind}`);
-  }
-  return { kind: kind as RegistryAssetKind, namespace, name, constraint };
-}
-
-/** True iff ``ref`` matches the grammar. Never throws — the non-throwing peer of
- *  {@link parseRef}, mirroring Python ``is_registry_ref``. */
-export function isRegistryRef(ref: string): boolean {
-  try {
-    parseRef(ref);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Partition key for a ref: ``{kind}#{namespace}/{name}`` (REGISTRY.md §3.1). */
-export function assetPk(kind: RegistryAssetKind, namespace: string, name: string): string {
-  return `${kind}#${namespace}/${name}`;
-}
+export { assetPk, isRegistryRef, parseRef, RegistryResolutionError } from './registry-ref';
+export type { RegistryResolutionReason } from './registry-ref';
 
 /**
  * Translate an allowed constraint (exact / caret / tilde) into a

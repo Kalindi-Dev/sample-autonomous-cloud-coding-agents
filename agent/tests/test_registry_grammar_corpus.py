@@ -29,8 +29,7 @@ _FIXTURE_DIR = (
 
 def _load_grammar_fixtures() -> list[dict]:
     assert _FIXTURE_DIR.is_dir(), (
-        f"expected fixture dir at {_FIXTURE_DIR}; "
-        "see contracts/registry-resolution/README.md"
+        f"expected fixture dir at {_FIXTURE_DIR}; see contracts/registry-resolution/README.md"
     )
     fixtures = []
     for path in sorted(_FIXTURE_DIR.glob("grammar-*.json")):

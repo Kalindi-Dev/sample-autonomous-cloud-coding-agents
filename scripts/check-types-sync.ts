@@ -148,6 +148,14 @@ const CLI_ONLY_ALLOWLIST = new Set<string>([
   'LinearLinkResponse',
   'JiraLinkResponse',
   'TraceUrlResponse',
+  // Registry (#246) command request/response envelopes — the server returns
+  // inline objects (not named types), so these CLI-facing shapes are CLI-only.
+  'RegistryPublishRequest',
+  'RegistryPublishResponse',
+  'RegistryAssetListItem',
+  'RegistryListResponse',
+  'RegistryVersionItem',
+  'RegistryShowResponse',
   // Error classification — derived server-side via a function and
   // emitted on TaskDetail. The CLI consumes the resulting interface
   // but the union of category strings is a CLI-only display

@@ -634,6 +634,7 @@ export class AgentStack extends Stack {
       taskEventsTable: taskEventsTable.table,
       userConcurrencyTable: userConcurrencyTable.table,
       repoTable: repoTable.table,
+      registryAssetsTable: registryAssetsTable.table,
       runtimeArn: runtime.agentRuntimeArn,
       githubTokenSecretArn: githubTokenSecret.secretArn,
       memoryId: agentMemory.memory.memoryId,

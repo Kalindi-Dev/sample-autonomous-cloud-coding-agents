@@ -98,9 +98,41 @@ describe('validatePublish', () => {
     expect(v.some((x) => x.field === 'descriptor.tool_prefix')).toBe(true);
   });
 
-  test('requires an artifact for loadable kinds', () => {
+  test('mcp_server with inline server_config does NOT require an artifact', () => {
+    const inlineNoArtifact = {
+      kind: 'mcp_server',
+      namespace: 'acme',
+      name: 'pdf-tools',
+      version: '1.4.1',
+      descriptor: {
+        summary: 'PDF tools',
+        permissions: [],
+        transport: 'http',
+        tool_prefix: 'mcp__pdf__',
+        server_config: { type: 'http', url: 'https://mcp.example.com/pdf' },
+      },
+      // no artifact_b64 — the inline server_config is the loadable content
+    };
+    expect(validatePublish(inlineNoArtifact)).toEqual([]);
+  });
+
+  test('mcp_server WITHOUT inline server_config OR artifact is rejected', () => {
     const { artifact_b64: _omit, ...noArtifact } = validMcp;
+    // validMcp's descriptor has no server_config, so removing the artifact
+    // leaves nothing loadable → rejected.
     expect(validatePublish(noArtifact).some((x) => x.field === 'artifact_b64')).toBe(true);
+  });
+
+  test('cedar_policy_module still requires an artifact (no inline path)', () => {
+    const v = validatePublish({
+      kind: 'cedar_policy_module',
+      namespace: 'acme',
+      name: 'guard',
+      version: '1.0.0',
+      descriptor: { summary: 's', permissions: [], cedar_actions: ['Action::"X"'] },
+      // no artifact_b64
+    });
+    expect(v.some((x) => x.field === 'artifact_b64')).toBe(true);
   });
 });
 
