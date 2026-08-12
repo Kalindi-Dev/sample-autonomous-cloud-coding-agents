@@ -1,3 +1,4 @@
+<!-- ABCA-REVIEWED -->
 <div align="center">
   <h1>ABCA</h1>
   <img alt="ABCA" width="350" src="docs/imgs/ABCA.png" />
@@ -16,6 +17,8 @@
   </p>
   <br />
 </div>
+
+> A sample self-hosted platform for autonomous background coding agents on AWS: submit a coding task and get back a ready-to-review pull request.
 
 ## What is ABCA
 
